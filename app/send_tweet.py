@@ -358,6 +358,11 @@ class TeamsPublisher:
         # また、TeamsのAdaptive Cardでは2つの改行が必要
         text_display = text_display.replace('\n', '\n\n')
 
+        # 現在時刻を取得（JST）
+        jst = pytz.timezone('Asia/Tokyo')
+        now = datetime.now(jst)
+        time_str = now.strftime("%Y/%m/%d %H:%M:%S")
+
         return {
             "type": "message",
             "attachments": [{
@@ -369,7 +374,7 @@ class TeamsPublisher:
                     "body": [
                         {
                             "type": "TextBlock",
-                            "text": f"🐦 X/Twitter Share",
+                            "text": f"🐦 X/Twitter Share - {time_str}",
                             "size": "Large",
                             "weight": "Bolder",
                             "color": "Accent"
