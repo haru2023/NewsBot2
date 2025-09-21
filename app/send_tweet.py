@@ -10,6 +10,7 @@ import requests
 import re
 import base64
 import pickle
+import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -51,6 +52,10 @@ class Config:
     # フィルター設定
     process_only_unread: bool = os.getenv("PROCESS_ONLY_UNREAD", "true").lower() == "true"
     mark_as_read: bool = os.getenv("MARK_AS_READ", "true").lower() == "true"
+
+    # LLM設定
+    llm_endpoint: str = os.getenv("LLM_ENDPOINT", "http://192.168.131.193:8008/v1/chat/completions")
+    llm_model: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
 
     dry_run: bool = os.getenv("DRY_RUN", "false").lower() == "true"
 
@@ -342,17 +347,105 @@ class XShareParser:
 
 # 不要なNewsCollectorとNewsFilterクラスは削除済み
 
+class TextRewriter:
+    """LLMを使用してテキストを魅力的に書き換え"""
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.endpoint = config.llm_endpoint
+        self.model = config.llm_model
+
+    def rewrite_text(self, original_text: str) -> str:
+        """
+        元のテキストを著作権に配慮しつつ魅力的に書き換える
+        事実関係は厳密に保持する
+        """
+        if not original_text or original_text.strip() == "[メディアのみの投稿]":
+            return original_text
+
+        if not self.endpoint:
+            logger.warning("LLM endpoint not configured, using original text")
+            return original_text
+
+        try:
+            # システムプロンプト
+            system_prompt = """あなたはニュース記事のリライターです。
+以下の厳密なルールに従って、与えられたテキストを書き換えてください：
+
+1. 事実関係は一切変更しない（数値、日付、人名、地名、組織名などは完全に保持）
+2. 元の情報の意味を変えない
+3. より読者の興味を引く表現に変更する
+4. 著作権に配慮し、独自の表現を用いる
+5. 簡潔で分かりやすい日本語を使用する
+6. 適切に絵文字を使用して視覚的な魅力を高める（ただし過度にならないよう注意）
+7. 改行は適切に保持する"""
+
+            # ユーザープロンプト
+            user_prompt = f"""以下のテキストを、事実関係を厳密に保持したまま、より魅力的な表現に書き換えてください：
+
+【元のテキスト】
+{original_text}
+
+【書き換えたテキスト】"""
+
+            # リクエストボディの作成
+            request_body = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500
+            }
+
+            # LLMへのリクエスト
+            response = requests.post(
+                self.endpoint,
+                headers={"Content-Type": "application/json"},
+                json=request_body,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    rewritten_text = result["choices"][0]["message"]["content"].strip()
+                    logger.info("Text successfully rewritten by LLM")
+                    return rewritten_text
+                else:
+                    logger.warning("Unexpected LLM response format")
+                    return original_text
+            else:
+                logger.error(f"LLM request failed with status {response.status_code}: {response.text}")
+                return original_text
+
+        except requests.exceptions.Timeout:
+            logger.error("LLM request timeout")
+            return original_text
+        except Exception as e:
+            logger.error(f"Error rewriting text with LLM: {e}")
+            return original_text
+
 class TeamsPublisher:
     """X共有をMicrosoft Teamsに投稿"""
 
     def __init__(self, config: Config):
         self.config = config
+        self.text_rewriter = TextRewriter(config)
 
     def create_x_share_card(self, x_info: Dict) -> Dict:
         """X共有用のAdaptive Card作成"""
 
         # テキストが空の場合
-        text_display = x_info['text'] if x_info['text'] else "[メディアのみの投稿]"
+        original_text = x_info['text'] if x_info['text'] else "[メディアのみの投稿]"
+
+        # LLMでテキストを書き換え
+        text_display = self.text_rewriter.rewrite_text(original_text)
+
+        # 書き換えが失敗した場合は元のテキストを使用
+        if not text_display:
+            text_display = original_text
 
         # Adaptive Cardで改行を表示するため、\nを\n\nに変換（Markdownでの改行）
         # また、TeamsのAdaptive Cardでは2つの改行が必要
