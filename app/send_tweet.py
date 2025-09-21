@@ -10,7 +10,6 @@ import requests
 import re
 import base64
 import pickle
-import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -369,24 +368,23 @@ class TextRewriter:
 
         try:
             # システムプロンプト
-            system_prompt = """あなたはニュース記事のリライターです。
-以下の厳密なルールに従って、与えられたテキストを書き換えてください：
+            system_prompt = """あなたはTwitterで話題を紹介する人です。
+元の内容を、短く魅力的な紹介ツイートに変換してください：
 
-1. 事実関係は一切変更しない（数値、日付、人名、地名、組織名などは完全に保持）
-2. 元の情報の意味を変えない
-3. より読者の興味を引く表現に変更する
-4. 著作権に配慮し、独自の表現を用いる
-5. 簡潔で分かりやすい日本語を使用する
-6. 適切に絵文字を使用して視覚的な魅力を高める（ただし過度にならないよう注意）
-7. 改行は適切に保持する"""
+ルール：
+1. 事実・数値は正確に保持（変えない・減らさない・増やさない）
+2. 元のツイートを140文字以内で簡潔に紹介
+3. 「〜だって」「〜らしい」「〜みたい」など口語的表現OK
+4. 絵文字を効果的に使用
+5. 興味を引く一言から始める
+6. ハッシュタグは禁止"""
 
             # ユーザープロンプト
-            user_prompt = f"""以下のテキストを、事実関係を厳密に保持したまま、より魅力的な表現に書き換えてください：
+            user_prompt = f"""これを短く紹介：
 
-【元のテキスト】
 {original_text}
 
-【書き換えたテキスト】"""
+紹介ツイート："""
 
             # リクエストボディの作成
             request_body = {
@@ -467,14 +465,14 @@ class TeamsPublisher:
                     "body": [
                         {
                             "type": "TextBlock",
-                            "text": f"🐦 X/Twitter Share - {time_str}",
+                            "text": f"🐦 AI News form X - {time_str}",
                             "size": "Large",
                             "weight": "Bolder",
                             "color": "Accent"
                         },
                         {
                             "type": "TextBlock",
-                            "text": f"@{x_info['username']}",
+                            "text": f"@{x_info['username']} の投稿に基づくAI紹介文",
                             "size": "Medium",
                             "color": "Good",
                             "spacing": "Small"
