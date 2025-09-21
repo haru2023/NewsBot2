@@ -1,0 +1,483 @@
+#!/usr/bin/env python3
+"""
+X (Twitter) Share via Gmail to Teams Bridge
+AndroidのXアプリから共有したメールを処理してTeamsに投稿
+"""
+
+import os
+import pytz
+import requests
+import re
+import base64
+import pickle
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+from dataclasses import dataclass
+from pathlib import Path
+
+# Gmail API imports
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# Import setup_logger from util.log
+from util.log import setup_logger
+
+# Setup logging
+logger = setup_logger(__name__)
+
+# Gmail API スコープ
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify'  # 既読マーク用
+]
+
+# Configuration
+@dataclass
+class Config:
+    """Configuration settings"""
+    teams_webhook_url: str = os.getenv("TEAMS_WEBHOOK_URL", "")
+
+    # Gmail設定
+    gmail_address: str = os.getenv("GMAIL_ADDRESS", "dummy@example.com")
+    credentials_file: str = os.getenv("GMAIL_CREDENTIALS_FILE", "/workspace/NewsBot2/app/credentials/credentials.json")
+    token_file: str = os.getenv("GMAIL_TOKEN_FILE", "/workspace/NewsBot2/app/credentials/token.pickle")
+
+    # 処理設定
+    check_hours_back: int = int(os.getenv("CHECK_HOURS_BACK_TWEET", "3"))  # X共有メール用：デフォルト3時間
+    max_emails_per_run: int = int(os.getenv("MAX_EMAILS_PER_RUN", "10"))
+
+    # フィルター設定
+    process_only_unread: bool = os.getenv("PROCESS_ONLY_UNREAD", "true").lower() == "true"
+    mark_as_read: bool = os.getenv("MARK_AS_READ", "true").lower() == "true"
+
+    dry_run: bool = os.getenv("DRY_RUN", "false").lower() == "true"
+
+
+class GmailClient:
+    """Gmail API Client for fetching X share emails"""
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.service = None
+        self.creds = None
+
+    def authenticate(self):
+        """Gmail API認証"""
+        token_path = Path(self.config.token_file)
+        creds_path = Path(self.config.credentials_file)
+
+        # トークンが存在する場合は読み込み
+        if token_path.exists():
+            with open(token_path, 'rb') as token:
+                self.creds = pickle.load(token)
+
+        # 認証が無効または存在しない場合
+        if not self.creds or not self.creds.valid:
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                logger.info("Refreshing Gmail token...")
+                self.creds.refresh(Request())
+            else:
+                if not creds_path.exists():
+                    logger.error(f"Credentials file not found: {creds_path}")
+                    logger.info("Please download credentials.json from Google Cloud Console")
+                    logger.info("1. Go to https://console.cloud.google.com/")
+                    logger.info("2. Create/Select project → Enable Gmail API")
+                    logger.info("3. Create credentials → OAuth 2.0 Client ID")
+                    logger.info("4. Download and save as credentials.json")
+                    return False
+
+                logger.info("Authenticating with Gmail for the first time...")
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(creds_path), SCOPES
+                )
+                self.creds = flow.run_local_server(port=0)
+
+            # トークンを保存
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(token_path, 'wb') as token:
+                pickle.dump(self.creds, token)
+
+        self.service = build('gmail', 'v1', credentials=self.creds)
+        # logger.info("Gmail authentication successful")  # 毎分は不要
+        return True
+
+    def search_x_share_emails(self) -> List[Dict]:
+        """X共有メールを検索"""
+        if not self.service:
+            return []
+
+        try:
+            # 検索クエリ構築
+            jst = pytz.timezone('Asia/Tokyo')
+            after_date = datetime.now(jst) - timedelta(hours=self.config.check_hours_back)
+            after_str = after_date.strftime("%Y/%m/%d")
+
+            # 自分から自分へのメール、X/TwitterのURLを含む
+            query_parts = [
+                f"from:{self.config.gmail_address}",
+                f"to:{self.config.gmail_address}",
+                f"after:{after_str}",
+                "(x.com OR twitter.com)"
+            ]
+
+            if self.config.process_only_unread:
+                query_parts.append("is:unread")
+
+            query = " ".join(query_parts)
+            # logger.info(f"Gmail search query: {query}")  # 毎回出力は不要
+
+            # メール検索
+            results = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=self.config.max_emails_per_run
+            ).execute()
+
+            messages = results.get('messages', [])
+            if messages:  # メールがある時だけログ出力
+                logger.info(f"Found {len(messages)} X share emails")
+
+            # 各メールの詳細を取得
+            emails = []
+            for msg in messages:
+                email_data = self.get_email_details(msg['id'])
+                if email_data:
+                    emails.append(email_data)
+
+            return emails
+
+        except HttpError as e:
+            logger.error(f"Gmail API error: {e}")
+            return []
+
+    def get_email_details(self, message_id: str) -> Optional[Dict]:
+        """メールの詳細を取得"""
+        try:
+            message = self.service.users().messages().get(
+                userId='me',
+                id=message_id
+            ).execute()
+
+            # ヘッダーから情報取得
+            headers = message['payload'].get('headers', [])
+            subject = ""
+            date = ""
+
+            for header in headers:
+                name = header['name']
+                value = header['value']
+                if name == 'Subject':
+                    subject = value
+                elif name == 'Date':
+                    date = value
+
+            # 本文を取得
+            body = self.extract_body(message['payload'])
+
+            return {
+                'id': message_id,
+                'subject': subject,
+                'date': date,
+                'body': body,
+                'snippet': message.get('snippet', '')
+            }
+
+        except HttpError as e:
+            logger.error(f"Error getting email details: {e}")
+            return None
+
+    def extract_body(self, payload) -> str:
+        """メール本文を抽出"""
+        body = ""
+
+        # シングルパートメール
+        if 'body' in payload and 'data' in payload['body']:
+            data = payload['body']['data']
+            body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+
+        # マルチパートメール
+        elif 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body']['data']
+                    body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+                elif 'parts' in part:  # ネストされたパート
+                    body += self.extract_body(part)
+
+        return body
+
+    def mark_as_read(self, message_id: str):
+        """メールを既読にする"""
+        if self.config.dry_run:
+            logger.info(f"DRY RUN - Would mark email as read: {message_id}")
+            return
+
+        try:
+            self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'removeLabelIds': ['UNREAD']}
+            ).execute()
+            logger.info(f"Marked email as read: {message_id}")
+        except HttpError as e:
+            logger.error(f"Error marking email as read: {e}")
+
+
+class XShareParser:
+    """X共有メールの解析"""
+
+    def extract_x_info(self, email: Dict) -> Optional[Dict]:
+        """メールからX投稿情報を抽出"""
+
+        body = email.get('body', '')
+        subject = email.get('subject', '')
+
+        # デバッグ：メール本文の最初の500文字をログ出力（必要時のみ有効化）
+        # logger.debug(f"Email body preview: {body[:500]}...")
+        # logger.debug(f"Email subject: {subject}")
+
+        # X/TwitterのURLを抽出
+        url_pattern = r'https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)'
+        url_match = re.search(url_pattern, body + ' ' + subject)
+
+        if not url_match:
+            logger.warning("No X/Twitter URL found in email")
+            return None
+
+        username = url_match.group(1)
+        tweet_id = url_match.group(2)
+        url = url_match.group(0)
+
+        # 本文からツイートテキストを抽出（改善版）
+        tweet_text = ""
+
+        # 方法1: URLの前の部分から取得
+        text_before_url = body.split(url)[0].strip()
+
+        # 方法2: 全体から共有メールの定型文を除去
+        full_text = body
+
+        # Gmail共有の一般的なパターンを除去
+        clean_patterns = [
+            r'Check out.*?:\s*',
+            r'Shared from.*?:\s*',
+            r'From X.*?:\s*',
+            r'.*shared.*tweet.*:\s*',
+            r'---------- Forwarded message ---------.*?\n',
+            r'From:.*?\n',
+            r'Date:.*?\n',
+            r'Subject:.*?\n',
+            r'To:.*?\n'
+        ]
+
+        for pattern in clean_patterns:
+            text_before_url = re.sub(pattern, '', text_before_url, flags=re.IGNORECASE | re.DOTALL)
+            full_text = re.sub(pattern, '', full_text, flags=re.IGNORECASE | re.DOTALL)
+
+        # URLとその後の余計な部分を削除
+        full_text = re.sub(r'https?://(?:www\.)?(?:twitter\.com|x\.com)/\S+.*', '', full_text, flags=re.DOTALL)
+        # t.co短縮URLを削除
+        full_text = re.sub(r'https?://t\.co/\S+', '', full_text)
+
+        # 「ポストしました:」までの部分を削除
+        if 'ポストしました:' in full_text:
+            # 「ポストしました:」の後の部分のみを取得
+            full_text = full_text.split('ポストしました:', 1)[-1]
+            # 先頭の空白文字（改行、スペース、タブなど）を削除
+            full_text = full_text.lstrip()
+
+        # 改行で分割し、意味のあるテキストを探す
+        lines = full_text.strip().split('\n')
+        meaningful_lines = []
+
+        for line in lines:
+            line = line.strip()
+            # 空行や短すぎる行をスキップ
+            if line and len(line) > 3 and not line.startswith('--'):
+                meaningful_lines.append(line)
+
+        # 複数行のツイートに対応
+        if meaningful_lines:
+            tweet_text = '\n'.join(meaningful_lines[:10])  # 最大10行まで取得
+
+        # ツイートテキストが取得できなかった場合のフォールバック
+        if not tweet_text.strip():
+            tweet_text = "[メール本文から抽出できませんでした]"
+            logger.warning(f"Could not extract tweet text from email. Body length: {len(body)}")
+
+        # logger.info(f"Extracted tweet text: {tweet_text[:100]}...")  # デバッグ用
+
+        return {
+            'url': url,
+            'username': username,
+            'tweet_id': tweet_id,
+            'text': tweet_text[:500],  # 長めに取得（Teamsカードで表示調整）
+            'date': email.get('date', ''),
+            'email_id': email.get('id', '')
+        }
+
+
+# 不要なNewsCollectorとNewsFilterクラスは削除済み
+
+class TeamsPublisher:
+    """X共有をMicrosoft Teamsに投稿"""
+
+    def __init__(self, config: Config):
+        self.config = config
+
+    def create_x_share_card(self, x_info: Dict) -> Dict:
+        """X共有用のAdaptive Card作成"""
+
+        # テキストが空の場合
+        text_display = x_info['text'] if x_info['text'] else "[メディアのみの投稿]"
+
+        # Adaptive Cardで改行を表示するため、\nを\n\nに変換（Markdownでの改行）
+        # また、TeamsのAdaptive Cardでは2つの改行が必要
+        text_display = text_display.replace('\n', '\n\n')
+
+        return {
+            "type": "message",
+            "attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "version": "1.2",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": f"🐦 X/Twitter Share",
+                            "size": "Large",
+                            "weight": "Bolder",
+                            "color": "Accent"
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": f"@{x_info['username']}",
+                            "size": "Medium",
+                            "color": "Good",
+                            "spacing": "Small"
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": text_display,
+                            "wrap": True,
+                            "size": "Medium",
+                            "spacing": "Medium"
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenUrl",
+                            "title": "Xで開く 🔗",
+                            "url": x_info['url']
+                        }
+                    ]
+                }
+            }]
+        }
+
+    def post_to_teams(self, x_info: Dict) -> bool:
+        """Teamsに投稿"""
+
+        card = self.create_x_share_card(x_info)
+
+        if self.config.dry_run:
+            logger.info(f"DRY RUN - Would post to Teams: @{x_info['username']} - {x_info['text'][:50]}...")
+            return True
+
+        try:
+            response = requests.post(
+                self.config.teams_webhook_url,
+                json=card,
+                timeout=10
+            )
+
+            if response.status_code in [200, 202, 1]:
+                logger.info(f"Posted to Teams: @{x_info['username']} - {x_info['tweet_id']}")
+                return True
+            else:
+                logger.error(f"Failed to post to Teams: {response.status_code}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error posting to Teams: {e}")
+            return False
+
+
+def main():
+    """メイン処理"""
+
+    # logger.info("=== X Gmail Share to Teams Bridge Started ===")  # 毎分は不要
+
+    config = Config()
+
+    if config.dry_run:
+        logger.info("Running in DRY RUN mode")
+
+    # Gmail認証
+    gmail = GmailClient(config)
+    if not gmail.authenticate():
+        logger.error("Gmail authentication failed")
+        return 1
+
+    # X共有メールを検索
+    emails = gmail.search_x_share_emails()
+
+    if not emails:
+        # logger.info("No X share emails found")  # 毎分は不要
+        return 0
+
+    # パーサーとパブリッシャー初期化
+    parser = XShareParser()
+    publisher = TeamsPublisher(config)
+
+    posted_count = 0
+
+    # 各メールを処理
+    for email in emails:
+        logger.info(f"Processing email: {email.get('subject', '')[:50]}...")
+
+        # デバッグ：メール内容全文を出力
+        logger.info("=" * 60)
+        logger.info("【メール内容全文】")
+        logger.info("=" * 60)
+        logger.info(f"Subject: {email.get('subject', '')}")
+        logger.info(f"Date: {email.get('date', '')}")
+        logger.info("Body:")
+        logger.info(email.get('body', ''))
+        logger.info("=" * 60)
+
+        # X情報を抽出
+        x_info = parser.extract_x_info(email)
+
+        if not x_info:
+            logger.warning("Could not extract X info from email")
+            continue
+
+        # デバッグ：投稿内容全文を出力
+        logger.info("=" * 60)
+        logger.info("【Teams投稿内容】")
+        logger.info("=" * 60)
+        logger.info(f"URL: {x_info['url']}")
+        logger.info(f"Username: @{x_info['username']}")
+        logger.info(f"Tweet ID: {x_info['tweet_id']}")
+        logger.info(f"Text:\n{x_info['text']}")
+        logger.info("=" * 60)
+
+        # Teamsに投稿
+        if publisher.post_to_teams(x_info):
+            posted_count += 1
+
+            # 成功したら既読にする
+            if config.mark_as_read:
+                gmail.mark_as_read(email['id'])
+
+    if posted_count > 0:
+        logger.info(f"Posted {posted_count} X shares to Teams")
+    return 0 if posted_count > 0 else 1
+
+if __name__ == "__main__":
+    exit(main())

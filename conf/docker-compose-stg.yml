@@ -8,16 +8,29 @@ services:
     container_name: ai-newsbot-stg
     volumes:
       - ../app/logs:/app/app/logs
+      - ../app/credentials:/app/app/credentials  # Gmail認証情報
     environment:
       # Pass through from .env file
       - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL}
       - LLM_ENDPOINT=${LLM_ENDPOINT}
       - LLM_MODEL=${LLM_MODEL}
-      # Staging-specific overrides
+      - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+
+      # News Collection Settings (send_news.py用)
       - MAX_NEWS_ITEMS=10
       - HOURS_BACK=3  # 過去N時間以内の記事を取得
       - MAX_ENTRIES_PER_FEED=30  # 各フィードから取得する最大記事数
       - MAX_ARTICLES_TO_LLM=250  # LLMへ送信する最大記事数
+
+      # Gmail API Settings (send_tweet.py用)
+      - GMAIL_CREDENTIALS_FILE=/app/app/credentials/credentials.json
+      - GMAIL_TOKEN_FILE=/app/app/credentials/token.pickle
+      - CHECK_HOURS_BACK_TWEET=24  # X共有メール取得時間範囲
+      - MAX_EMAILS_PER_RUN=10  # 1回の実行で処理する最大メール数
+      - PROCESS_ONLY_UNREAD=true  # 未読メールのみ処理
+      - MARK_AS_READ=true  # 処理済みメールを既読にする
+
+      # Common Settings
       - DRY_RUN=false  # ステージング環境では実際に投稿
       - TZ=Asia/Tokyo
     restart: "no"
@@ -25,8 +38,12 @@ services:
       - newsbot-network
     labels:
       ofelia.enabled: "true"
+      # send_news.py - ニュース収集ジョブ
       ofelia.job-exec.newsbot.schedule: "0 0 9 * * *"  # 毎日午前9時
       ofelia.job-exec.newsbot.command: "python /app/app/send_news.py"
+      # send_tweet.py - X共有メール処理ジョブ
+      ofelia.job-exec.xshare.schedule: "0 0 9 * * *"  # 毎日午前9時
+      ofelia.job-exec.xshare.command: "python /app/app/send_tweet.py"
 
   # Scheduled job using ofelia (毎日午前9時に実行)
   scheduler:

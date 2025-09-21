@@ -9,3 +9,6 @@ backend/__pycache__/AIBT.cpython-311.pyc
 .env
 conf/logs
 .serena/
+*credentials*
+*secret*
+token.pickle

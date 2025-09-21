@@ -29,7 +29,9 @@ def setup_logger(name):
     # 既存のハンドラをクリア（重複を防ぐ）
     logger.handlers.clear()
     # ファイルハンドラの設定
-    file_handler = logging.FileHandler("/app/app/logs/log.log", encoding='utf-8')
+    import os
+    log_path = "/app/app/logs/log.log" if os.path.exists("/app/app/logs") else "/workspace/NewsBot2/app/logs/log.log"
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     # ストリームハンドラの設定
     stream_handler = logging.StreamHandler()
@@ -50,7 +52,8 @@ def setup_logger(name):
     _additional_logger.setLevel(logging.INFO)
     _additional_logger.handlers.clear()
     _additional_logger.propagate = True
-    additional_handler = logging.FileHandler("/app/app/logs/Special.log", encoding='utf-8')
+    special_log_path = "/app/app/logs/Special.log" if os.path.exists("/app/app/logs") else "/workspace/NewsBot2/app/logs/Special.log"
+    additional_handler = logging.FileHandler(special_log_path, encoding='utf-8')
     additional_handler.setLevel(logging.INFO)
     additional_handler.setFormatter(formatter)
     _additional_logger.addHandler(additional_handler)
