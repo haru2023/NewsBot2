@@ -40,7 +40,7 @@ services:
       ofelia.job-exec.newsbot.schedule: "0 0 12 * * *"  # 毎日12:00
       ofelia.job-exec.newsbot.command: "python /app/app/send_news.py"
       # send_tweet.py - X共有メール処理ジョブ
-      ofelia.job-exec.xshare.schedule: "0 0 7 * * *"  # 毎日7:00
+      ofelia.job-exec.xshare.schedule: "0 0 8 * * *"  # 毎日8:00
       ofelia.job-exec.xshare.command: "python /app/app/send_tweet.py"
     networks:
       - newsbot-network
