@@ -46,7 +46,7 @@ class Config:
 
     # 処理設定
     check_hours_back: int = int(os.getenv("CHECK_HOURS_BACK_TWEET", "3"))  # X共有メール用：デフォルト3時間
-    max_emails_per_run: int = int(os.getenv("MAX_EMAILS_PER_RUN", "10"))
+    max_emails_per_run: int = int(os.getenv("MAX_EMAILS_PER_RUN", "5"))
 
     # フィルター設定
     process_only_unread: bool = os.getenv("PROCESS_ONLY_UNREAD", "true").lower() == "true"
@@ -128,23 +128,43 @@ class GmailClient:
             query = " ".join(query_parts)
             # logger.info(f"Gmail search query: {query}")  # 毎回出力は不要
 
-            # メール検索
-            results = self.service.users().messages().list(
-                userId='me',
-                q=query,
-                maxResults=self.config.max_emails_per_run
-            ).execute()
+            # メール検索（すべての対象メールを取得）
+            all_messages = []
+            page_token = None
 
-            messages = results.get('messages', [])
-            if messages:  # メールがある時だけログ出力
-                logger.info(f"Found {len(messages)} X share emails")
+            while True:
+                results = self.service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    pageToken=page_token,
+                    maxResults=100  # APIの1ページあたりの最大値
+                ).execute()
 
-            # 各メールの詳細を取得
+                messages = results.get('messages', [])
+                all_messages.extend(messages)
+
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+
+            if all_messages:  # メールがある時だけログ出力
+                logger.info(f"Found {len(all_messages)} X share emails total")
+
+            # 各メールの詳細を取得（時間情報も含む）
             emails = []
-            for msg in messages:
+            for msg in all_messages:
                 email_data = self.get_email_details(msg['id'])
                 if email_data:
                     emails.append(email_data)
+
+            # 日付でソート（古い順）
+            emails.sort(key=lambda x: x.get('internalDate', '0'))
+
+            # 設定された上限数だけ処理対象とする
+            emails = emails[:self.config.max_emails_per_run]
+
+            if emails:
+                logger.info(f"Processing {len(emails)} oldest emails")
 
             return emails
 
@@ -181,7 +201,8 @@ class GmailClient:
                 'subject': subject,
                 'date': date,
                 'body': body,
-                'snippet': message.get('snippet', '')
+                'snippet': message.get('snippet', ''),
+                'internalDate': message.get('internalDate', '0')  # ソート用のタイムスタンプ
             }
 
         except HttpError as e:
