@@ -1,0 +1,11 @@
+__pycache__/
+*.log
+*.pyc
+.vscode/settings.json
+nginx/log/error.log
+nginx/log/access.log
+backend/app.log
+backend/__pycache__/AIBT.cpython-311.pyc
+.env
+conf/logs
+.serena/

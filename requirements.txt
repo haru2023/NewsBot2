@@ -1,0 +1,7 @@
+# AI News Bot Requirements
+feedparser==6.0.12
+requests==2.32.5
+python-dateutil==2.8.2
+python-dotenv==1.0.0
+pytz==2024.2
+flask==3.0.3

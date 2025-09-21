@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  newsbot:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ai-newsbot-dev
+    volumes:
+      - ../app/logs:/app/app/logs
+    environment:
+      # Pass through from .env file
+      - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL}
+      - LLM_ENDPOINT=${LLM_ENDPOINT}
+      - LLM_MODEL=${LLM_MODEL}
+      # Development-specific overrides
+      - MAX_NEWS_ITEMS=3
+      - HOURS_BACK=1  # 過去N時間以内の記事を取得
+      - MAX_ENTRIES_PER_FEED=20  # 各フィードから取得する最大記事数
+      - MAX_ARTICLES_TO_LLM=50  # LLMへ送信する最大記事数
+      - DRY_RUN=false  # 実際に投稿する
+      - TZ=Asia/Tokyo
+    restart: "no"
+    networks:
+      - newsbot-network
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.newsbot.schedule: "@every 1m"
+      ofelia.job-exec.newsbot.command: "python /app/app/send_news.py"
+
+  scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: ai-newsbot-scheduler-dev
+    restart: "no"
+    depends_on:
+      - newsbot
+    environment:
+      - TZ=Asia/Tokyo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: daemon --docker
+    networks:
+      - newsbot-network
+
+networks:
+  newsbot-network:
+    driver: bridge
