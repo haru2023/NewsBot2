@@ -161,6 +161,18 @@ class NewsFilter:
         if not articles:
             return []
 
+        # Remove duplicate titles
+        seen_titles = set()
+        unique_articles = []
+        for article in articles:
+            title = article.get('title', '').strip()
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_articles.append(article)
+
+        logger.info(f"Removed {len(articles) - len(unique_articles)} duplicate articles based on title")
+        articles = unique_articles
+
         # LLMに送る記事数の上限（環境変数で設定可能、デフォルト40）
         max_articles_to_llm = int(os.getenv('MAX_ARTICLES_TO_LLM', '40'))
 
