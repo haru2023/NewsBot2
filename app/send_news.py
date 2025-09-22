@@ -87,17 +87,20 @@ class NewsCollector:
                     total_in_feed += 1
                     # 公開日時のパース
                     published_str = entry.get("published", "")
-                    if published_str:
-                        try:
-                            published_dt = parser.parse(published_str)
-                            if published_dt.tzinfo is None:
-                                published_dt = jst.localize(published_dt)
+                    if not published_str:
+                        # 公開日時が空の場合はスキップ
+                        continue
 
-                            # 指定時間より古い記事はスキップ
-                            if published_dt < cutoff_time:
-                                continue
-                        except:
-                            pass  # パースできない場合は含める
+                    try:
+                        published_dt = parser.parse(published_str)
+                        if published_dt.tzinfo is None:
+                            published_dt = jst.localize(published_dt)
+
+                        # 指定時間より古い記事はスキップ
+                        if published_dt < cutoff_time:
+                            continue
+                    except:
+                        continue  # パースできない場合は含めない
 
                     article = {
                         "title": entry.get("title", ""),
@@ -106,6 +109,7 @@ class NewsCollector:
                         "published": published_str,
                         "summary": entry.get("summary", "")[:500] if entry.get("summary") else ""
                     }
+                    logger.info(f'{article["title"]=}, {article["url"]=}, {article["source"]=}, {article["published"]=}')
                     all_articles.append(article)
                     articles_added += 1
                     recent_count += 1
@@ -344,6 +348,19 @@ class TeamsPublisher:
     def __init__(self, config: Config):
         self.config = config
 
+    def format_published_date(self, published_str: str) -> str:
+        """Format published date to YY/MM/DD HH:mm format"""
+        if not published_str:
+            return ""
+        try:
+            # Parse the date string
+            dt = parser.parse(published_str)
+            # Format to YY/MM/DD HH:mm
+            return dt.strftime("%y/%m/%d %H:%M")
+        except:
+            # Return original if parsing fails
+            return published_str
+
     def create_news_card(self, article: Dict, index: int) -> Dict:
         """Create an Adaptive Card for a news article"""
 
@@ -423,7 +440,7 @@ class TeamsPublisher:
                                     "items": [
                                         {
                                             "type": "TextBlock",
-                                            "text": f"{stars}",
+                                            "text": self.format_published_date(article.get('published', '')),
                                             "size": "Small"
                                         }
                                     ]
@@ -646,7 +663,7 @@ class TeamsPublisher:
                             "items": [
                                 {
                                     "type": "TextBlock",
-                                    "text": f"{stars}",
+                                    "text": self.format_published_date(article.get('published', '')),
                                     "size": "Small"
                                 }
                             ]
@@ -659,8 +676,7 @@ class TeamsPublisher:
                                     "type": "TextBlock",
                                     "text": f"Source: {article['source']}",
                                     "size": "Small",
-                                    "color": "Attention",
-                                    "horizontalAlignment": "Right"
+                                    "color": "Attention"
                                 }
                             ]
                         }
