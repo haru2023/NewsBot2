@@ -39,10 +39,10 @@ services:
     labels:
       ofelia.enabled: "true"
       # send_news.py - ニュース収集ジョブ
-      ofelia.job-exec.newsbot.schedule: "@every 1m"
+      ofelia.job-exec.newsbot.schedule: "@every 1d"
       ofelia.job-exec.newsbot.command: "python /app/app/send_news.py"
       # send_tweet.py - X共有メール処理ジョブ
-      ofelia.job-exec.xshare.schedule: "@every 1m"
+      ofelia.job-exec.xshare.schedule: "@every 1d"
       ofelia.job-exec.xshare.command: "python /app/app/send_tweet.py"
 
   scheduler:
