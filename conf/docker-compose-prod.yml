@@ -25,7 +25,7 @@ services:
       # Gmail API Settings (send_tweet.py用)
       - GMAIL_CREDENTIALS_FILE=/app/app/credentials/credentials.json
       - GMAIL_TOKEN_FILE=/app/app/credentials/token.pickle
-      - CHECK_HOURS_BACK_TWEET=168  # X共有メール取得時間範囲
+      - CHECK_HOURS_BACK_TWEET=720  # X共有メール取得時間範囲(30日)
       - MAX_EMAILS_PER_RUN=3  # 1回の実行で処理する最大メール数
       - PROCESS_ONLY_UNREAD=true  # 未読メールのみ処理
       - MARK_AS_READ=true  # 処理済みメールを既読にする
