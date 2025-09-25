@@ -468,7 +468,7 @@ class TeamsPublisher:
                         },
                         {
                             "type": "TextBlock",
-                            "text": f"Source: {article['source']}",
+                            "text": f"{article['source']}",
                             "size": "Small",
                             "color": "Attention",
                             "spacing": "Small"
@@ -686,7 +686,7 @@ class TeamsPublisher:
                             "items": [
                                 {
                                     "type": "TextBlock",
-                                    "text": f"Source: {article['source']}",
+                                    "text": f"{article['source']}",
                                     "size": "Small",
                                     "color": "Attention"
                                 }
