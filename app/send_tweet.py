@@ -10,6 +10,7 @@ import requests
 import re
 import base64
 import pickle
+import random
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -164,8 +165,9 @@ class GmailClient:
             # 日付でソート（古い順）
             emails.sort(key=lambda x: x.get('internalDate', '0'))
 
-            # 設定された上限数だけ処理対象とする
-            emails = emails[:self.config.max_emails_per_run]
+            # 設定された上限数の-1, 0, +1をランダムに加算して処理対象とする
+            max_count = self.config.max_emails_per_run + random.randint(-1, 1)
+            emails = emails[:max_count]
 
             if emails:
                 logger.info(f"Processing {len(emails)} oldest emails")
