@@ -15,6 +15,7 @@ services:
       - LLM_ENDPOINT=${LLM_ENDPOINT}
       - LLM_MODEL=${LLM_MODEL}
       - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_FROM_ADDRESSES=${GMAIL_FROM_ADDRESSES}
 
       # News Collection Settings (send_news.py用)
       - MAX_NEWS_ITEMS=5
@@ -43,7 +44,7 @@ services:
       ofelia.job-exec.xshare.schedule: "0 0 8 * * *"  # 毎日8:00
       ofelia.job-exec.xshare.command: "python /app/app/send_tweet.py"
     networks:
-      - newsbot-network
+      - ai-network
 
   # Scheduled job using ofelia (1時間ごとに実行)
   scheduler:
@@ -58,8 +59,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - newsbot-network
+      - ai-network
 
 networks:
-  newsbot-network:
-    driver: bridge
+  ai-network:
+    external: true

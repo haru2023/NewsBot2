@@ -15,6 +15,7 @@ services:
       - LLM_ENDPOINT=${LLM_ENDPOINT}
       - LLM_MODEL=${LLM_MODEL}
       - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_FROM_ADDRESSES=${GMAIL_FROM_ADDRESSES}
 
       # News Collection Settings (send_news.py用)
       - MAX_NEWS_ITEMS=10
@@ -35,7 +36,7 @@ services:
       - TZ=Asia/Tokyo
     restart: "no"
     networks:
-      - newsbot-network
+      - ai-network
     labels:
       ofelia.enabled: "true"
       # send_news.py - ニュース収集ジョブ
@@ -58,8 +59,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - newsbot-network
+      - ai-network
 
 networks:
-  newsbot-network:
-    driver: bridge
+  ai-network:
+    external: true
