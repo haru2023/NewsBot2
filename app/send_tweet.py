@@ -42,6 +42,7 @@ class Config:
 
     # Gmail設定
     gmail_address: str = os.getenv("GMAIL_ADDRESS", "dummy@example.com")
+    gmail_from_addresses: str = os.getenv("GMAIL_FROM_ADDRESSES", "dummy@example.com")  # カンマ区切りの送信元アドレス
     credentials_file: str = os.getenv("GMAIL_CREDENTIALS_FILE", "/workspace/NewsBot2/app/credentials/credentials.json")
     token_file: str = os.getenv("GMAIL_TOKEN_FILE", "/workspace/NewsBot2/app/credentials/token.pickle")
 
@@ -119,9 +120,11 @@ class GmailClient:
             after_date = datetime.now(jst) - timedelta(hours=self.config.check_hours_back)
             after_str = after_date.strftime("%Y/%m/%d")
 
-            # 自分から自分へのメール、X/TwitterのURLを含む
+            # 設定された送信元アドレスから、自分宛のメール、X/TwitterのURLを含む
+            from_addresses = self.config.gmail_from_addresses.split(',')
+            from_query = ' OR '.join([f"from:{addr.strip()}" for addr in from_addresses])
             query_parts = [
-                f"from:{self.config.gmail_address}",
+                f"({from_query})",
                 f"to:{self.config.gmail_address}",
                 f"after:{after_str}",
                 "(x.com OR twitter.com)"
